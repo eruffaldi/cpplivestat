@@ -1,35 +1,59 @@
-#ifndef LIVESTATISTICS_H
-#define LIVESTATISTICS_H
+/**
+ * Incremental Statistics computation
+ *
+ * - accumulates various statistics (mean, min, max, variance)
+ * - allows combination of two sets for parallel or subset computation
+ *
+ * Requirements on T: 
+ *  - zero assignment
+ *  - compare < 
+ *  - operators: + / * - 
+ *
+ * Using: Chan, Tony F.; Golub, Gene H.; LeVeque, Randall J. (1979), "Updating Formulae and a Pairwise Algorithm for Computing Sample Variances." (PDF), Technical Report STAN-CS-79-773, Department of Computer Science, Stanford University.
 
-template <class T>
+ *
+ * Emanuele Ruffaldi @ Scuola Superiore Sant'Anna 2013-2015
+ */
+#pragma once
+
+/// when T=int use B=float to have meaningful mean and variance
+template <class T, class B = T>
 struct LiveStatistics
 {
     LiveStatistics() { reset(); }
-    T vmin,vmax,vmean,vstd2;
+
+    T vmin,vmax;
     T vsum;
+    B vmean,vstd2;
     int vcount;
 
-    bool isEmpty() const { return vcount == 0; }
+    /// returns true if 
+    bool empty() const { return vcount == 0; }
 
-    void reset() { vcount = 0; vmin = vmax = vmean = vstd2 = vsum = vm2= 0;  }
-    void update(T v);
-    void merge(const LiveStatistics<T> &other);
+    /// initial state
+    void reset() { vcount = 0; vmin = vmax = vmean = vstd2 = vsum = vm2 = 0;  }
+
+    /// adds value
+    void add(T v);
+
+    /// combines another 
+    LiveStatistics & merge(const LiveStatistics<T,B> &other);
 
 protected:
-    T vm2;
+    B vm2;
 };
 
-inline template<class T>
-void LiveStatistics<T>::update(T v)
+template<class T, class B>
+void LiveStatistics<T,B>::add(T v)
 {
     if(vcount == 0)
     {
         vcount = 1;
         vmin = v;
         vmax = v;
-        vstd2 = 0;
         vsum = v;
         vmean = v;
+        vstd2 = 0;
         vm2 = 0;
     }
     else
@@ -37,40 +61,43 @@ void LiveStatistics<T>::update(T v)
         vcount++;
         if(v < vmin)
             vmin = v;
-        if(v > vmax)
+        if(!(v < vmax)) // assignment when equal, but we reduce requirement on <
             vmax = v;
 
-        float dvold = v-vmean;
+        B dvold = v-vmean;
         vmean += dvold/vcount;
-        vm2 += (v-vmean)*dvold;
+        vm2   += (v-vmean)*dvold;
         vsum  += v;
 
-        vstd2 = vm2/vcount;
+        vstd2 = vm2/(vcount-1);
     }
 }
 
-inline template<class T>
-void LiveStatistics<T>::merge(const LiveStatistics<T> &other)
+template<class T, class BB>
+LiveStatistics<T,BB> & LiveStatistics<T,BB>::merge(const LiveStatistics<T,BB> &B) 
 {
-    if(other.isEmpty())
-        return;
-    else if(isEmpty())
-        *this = other;
+    if(B.empty())
+        ;
+    else if(empty())
+        *this = B;
     else
     {
-        if(other.vmin < vmin)
-            vmin = other.vmin;
-        if(other.vmax > vmax)
-            vmax = other.vmax;
+        // assert A.vcount >=1 and B.vcount >= 1 implies out.vcount >= 2
+        if(B.vmin < vmin)
+            vmin = B.vmin;
+        if(!(B.vmax < vmax))
+            vmax = B.vmax;
 
         int vcountold = vcount;
-        T delta = vmean-other.vmean;
+        BB delta = B.vmean-vmean;
 
-        vcount += other.vcount;
-        vsum += other.vsum;
-        vmean += delta*other.vcount/vcount;
-        vm2 += other.vm2 + delta*delta*(other.vcount*vcountold)/vcount;
-        vstd2 = vm2/vcount;
+        vcount += B.vcount;
+        vsum += B.vsum;
+
+        vmean += delta*B.vcount/vcount;
+        vm2 += B.vm2 + delta*delta*(B.vcount*vcountold)/vcount;
+        vstd2 = vm2/(vcount-1);
     }
+    return *this;
 
 }
